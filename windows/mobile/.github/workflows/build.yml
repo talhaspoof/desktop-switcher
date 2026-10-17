@@ -1,0 +1,77 @@
+name: Build Windows and Android Apps
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build_windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+          
+      - name: Compile Windows EXE
+        run: dotnet publish windows/DesktopSwitcherServer.csproj -c Release -o published_windows
+        
+      - name: Build Windows Installer (Inno Setup)
+        run: |
+          $iss = @"
+          [Setup]
+          AppName=Desktop Switcher
+          AppVersion=1.0
+          DefaultDirName={autopf}\DesktopSwitcher
+          OutputBaseFilename=DesktopSwitcher_Windows_Installer
+          OutputDir=.
+          PrivilegesRequired=admin
+          [Files]
+          Source: "published_windows\DesktopSwitcherServer.exe"; DestDir: "{app}"
+          [Icons]
+          Name: "{commonstartup}\Desktop Switcher"; Filename: "{app}\DesktopSwitcherServer.exe"
+          [Run]
+          Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""Desktop Switcher UDP"" dir=in action=allow protocol=UDP localport=45454"; Flags: runhidden
+          Filename: "{app}\DesktopSwitcherServer.exe"; Flags: nowait postinstall skipifsilent
+          "@
+          $iss | Out-File -Encoding ASCII installer.iss
+          iscc installer.iss
+
+      - name: Upload Windows Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-Installer-EXE
+          path: DesktopSwitcher_Windows_Installer.exe
+
+  build_android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          
+      - name: Generate Android Project & Inject Code
+        run: |
+          flutter create --org com.desktopswitcher app_build
+          cp mobile/main.dart app_build/lib/main.dart
+          sed -i '/<application/i <uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /><uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />' app_build/android/app/src/main/AndroidManifest.xml
+          cd app_build
+          flutter build apk --release
+          
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Android-App-APK
+          path: app_build/build/app/outputs/flutter-apk/app-release.apk
